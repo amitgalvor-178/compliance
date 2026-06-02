@@ -64,10 +64,7 @@ export async function fetchCreatorProfile(handle: string): Promise<InstagramProf
   const igUserId = getIGUserId();
   const token = getAccessToken();
 
-  // username intentionally omitted from fields — passing it both here and as
-  // the &username= query param causes Meta's parser to return (#100).
-  // We populate username in mapProfile from the handle we already know.
-  const fields = [
+  const responseFields = [
     'id',
     'name',
     'biography',
@@ -77,32 +74,31 @@ export async function fetchCreatorProfile(handle: string): Promise<InstagramProf
     'website',
   ].join(',');
 
-  const buildUrl = (nodeId: string, tok: string) =>
-    `${META_GRAPH_BASE}/${nodeId}` +
-    `?fields=business_discovery.fields(${fields})` +
-    `&username=${encodeURIComponent(handle)}` +
+  // Meta field-argument syntax: username is embedded in the field expression,
+  // not passed as a separate &username= query param (which is broken in v24.0).
+  const buildUrl = (tok: string) =>
+    `${META_GRAPH_BASE}/${igUserId}` +
+    `?fields=business_discovery(username=${encodeURIComponent(handle)}).fields(${responseFields})` +
     `&access_token=${tok}`;
 
-  // Attempt 1: IG User ID + stored token
+  // Attempt 1: stored token
   try {
-    const data = await metaFetch<{ business_discovery: any }>(buildUrl(igUserId, token));
+    const data = await metaFetch<{ business_discovery: any }>(buildUrl(token));
     return mapProfile(data.business_discovery, handle);
   } catch (err: any) {
     if (!err.message.includes('#100')) throw err;
   }
 
-  // Attempt 2: exchange for Page Access Token and retry with Page ID node
+  // Attempt 2: exchange for Page Access Token and retry
   const page = await fetchPageAccessToken();
   if (!page) {
     throw new Error(
-      'Business Discovery failed and no Page Access Token could be obtained. ' +
-        'Ensure META_ACCESS_TOKEN is a valid User or Page Access Token with instagram_basic scope.',
+      'Business Discovery failed. Ensure META_ACCESS_TOKEN is a valid Page Access Token ' +
+        'with instagram_basic and pages_read_engagement scopes.',
     );
   }
 
-  const data = await metaFetch<{ business_discovery: any }>(
-    buildUrl(page.pageId, page.pageToken),
-  );
+  const data = await metaFetch<{ business_discovery: any }>(buildUrl(page.pageToken));
   return mapProfile(data.business_discovery, handle);
 }
 
@@ -142,13 +138,19 @@ export async function debugMetaCredentials(
   const pageToken = matchedPage?.access_token ?? null;
   const tok = pageToken ?? userToken;
 
-  const fieldsWithUsername = 'id,username,name,biography,followers_count';
-  const fieldsNoUsername = 'id,name,biography,followers_count';
+  const responseFields = 'id,name,biography,followers_count';
 
-  const buildUrl = (node: string, t: string, fields: string, handle: string) =>
-    `${META_GRAPH_BASE}/${node}` +
-    `?fields=business_discovery.fields(${fields})` +
-    `&username=${encodeURIComponent(handle)}` +
+  // Syntax A: field-argument (username embedded in field expression — v24.0 approach)
+  const buildUrlFieldArg = (h: string, t: string) =>
+    `${META_GRAPH_BASE}/${igUserId}` +
+    `?fields=business_discovery(username=${encodeURIComponent(h)}).fields(${responseFields})` +
+    `&access_token=${t}`;
+
+  // Syntax B: query param (documented but apparently broken in v24.0)
+  const buildUrlQueryParam = (h: string, t: string) =>
+    `${META_GRAPH_BASE}/${igUserId}` +
+    `?fields=business_discovery.fields(${responseFields})` +
+    `&username=${encodeURIComponent(h)}` +
     `&access_token=${t}`;
 
   const test = async (label: string, url: string) => {
@@ -157,17 +159,12 @@ export async function debugMetaCredentials(
     return { label, ok: r.ok, status: r.status, url: mask(url), response: body };
   };
 
-  // Test handles: user-specified, or a set of known public business accounts
-  const handles = handleOverride
-    ? [handleOverride]
-    : ['nike', 'natgeo', 'zomato_in'];
+  const handles = handleOverride ? [handleOverride] : ['nike', 'natgeo', 'zomato_in'];
 
   const tests = await Promise.all(
     handles.flatMap((h) => [
-      // Without "username" in fields (avoids name collision with the &username= param)
-      test(`igUserId | fields-no-username | handle=${h}`, buildUrl(igUserId, tok, fieldsNoUsername, h)),
-      // With "username" in fields (original approach — may cause (#100))
-      test(`igUserId | fields-with-username | handle=${h}`, buildUrl(igUserId, tok, fieldsWithUsername, h)),
+      test(`field-arg | handle=${h}`, buildUrlFieldArg(h, tok)),
+      test(`query-param | handle=${h}`, buildUrlQueryParam(h, tok)),
     ]),
   );
 
