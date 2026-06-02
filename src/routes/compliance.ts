@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { runCompliancePipeline } from '../services/compliance/complianceOrchestrator.js';
 import { generateHTMLReport } from '../services/report/reportGenerator.js';
+import { debugMetaCredentials } from '../instagram/metaGraphClient.js';
 import type { ComplianceReport } from '../types/index.js';
 
 const router = Router();
@@ -86,6 +87,16 @@ router.get('/report/:jobId/json', (req: Request, res: Response) => {
     return;
   }
   res.json(job.report);
+});
+
+// GET /api/compliance/debug — diagnose Meta credentials (never expose in production beyond internal use)
+router.get('/debug', async (_req: Request, res: Response) => {
+  try {
+    const result = await debugMetaCredentials('instagram');
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 export default router;

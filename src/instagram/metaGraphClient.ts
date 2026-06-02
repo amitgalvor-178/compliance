@@ -69,6 +69,56 @@ export async function fetchCreatorProfile(handle: string): Promise<InstagramProf
 }
 
 /**
+ * Diagnostic: returns env var state + raw Meta API response for a test handle.
+ * Only called from the /api/compliance/debug route — never in production flow.
+ */
+export async function debugMetaCredentials(testHandle = 'instagram'): Promise<{
+  igUserIdSet: boolean;
+  igUserIdPrefix: string;
+  tokenSet: boolean;
+  tokenPrefix: string;
+  requestUrl: string;
+  rawResponse: unknown;
+  error?: string;
+}> {
+  const igUserId = process.env.META_IG_USER_ID || '';
+  const token = process.env.META_ACCESS_TOKEN || '';
+
+  const fields = 'id,username,name,biography,followers_count';
+  const url =
+    `${META_GRAPH_BASE}/${igUserId}` +
+    `?fields=business_discovery.fields(${fields})` +
+    `&username=${encodeURIComponent(testHandle)}` +
+    `&access_token=${token}`;
+
+  const safeUrl = url.replace(token, token.slice(0, 10) + '...');
+
+  try {
+    const res = await fetch(url);
+    const raw = await res.json().catch(() => ({ _parseError: true }));
+    return {
+      igUserIdSet: !!igUserId,
+      igUserIdPrefix: igUserId.slice(0, 6) + (igUserId.length > 6 ? '...' : ''),
+      tokenSet: !!token,
+      tokenPrefix: token.slice(0, 10) + (token.length > 10 ? '...' : ''),
+      requestUrl: safeUrl,
+      rawResponse: raw,
+      error: res.ok ? undefined : `HTTP ${res.status}`,
+    };
+  } catch (err: any) {
+    return {
+      igUserIdSet: !!igUserId,
+      igUserIdPrefix: igUserId.slice(0, 6) + (igUserId.length > 6 ? '...' : ''),
+      tokenSet: !!token,
+      tokenPrefix: token.slice(0, 10) + (token.length > 10 ? '...' : ''),
+      requestUrl: safeUrl,
+      rawResponse: null,
+      error: err.message,
+    };
+  }
+}
+
+/**
  * Fetch the most recent posts for a creator using their IG user ID.
  * media_url is available for both images and videos on public business accounts.
  */
