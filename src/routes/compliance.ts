@@ -89,10 +89,11 @@ router.get('/report/:jobId/json', (req: Request, res: Response) => {
   res.json(job.report);
 });
 
-// GET /api/compliance/debug — diagnose Meta credentials (never expose in production beyond internal use)
-router.get('/debug', async (_req: Request, res: Response) => {
+// GET /api/compliance/debug[?handle=xyz] — diagnose Meta credentials
+router.get('/debug', async (req: Request, res: Response) => {
+  const handle = typeof req.query.handle === 'string' ? req.query.handle : undefined;
   try {
-    const result = await debugMetaCredentials('instagram');
+    const result = await debugMetaCredentials(handle);
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });

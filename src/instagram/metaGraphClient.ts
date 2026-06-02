@@ -64,9 +64,11 @@ export async function fetchCreatorProfile(handle: string): Promise<InstagramProf
   const igUserId = getIGUserId();
   const token = getAccessToken();
 
+  // username intentionally omitted from fields — passing it both here and as
+  // the &username= query param causes Meta's parser to return (#100).
+  // We populate username in mapProfile from the handle we already know.
   const fields = [
     'id',
-    'username',
     'name',
     'biography',
     'profile_picture_url',
@@ -84,12 +86,12 @@ export async function fetchCreatorProfile(handle: string): Promise<InstagramProf
   // Attempt 1: IG User ID + stored token
   try {
     const data = await metaFetch<{ business_discovery: any }>(buildUrl(igUserId, token));
-    return mapProfile(data.business_discovery);
+    return mapProfile(data.business_discovery, handle);
   } catch (err: any) {
     if (!err.message.includes('#100')) throw err;
   }
 
-  // Attempt 2: exchange for Page Access Token and try with Page ID node
+  // Attempt 2: exchange for Page Access Token and retry with Page ID node
   const page = await fetchPageAccessToken();
   if (!page) {
     throw new Error(
@@ -101,14 +103,14 @@ export async function fetchCreatorProfile(handle: string): Promise<InstagramProf
   const data = await metaFetch<{ business_discovery: any }>(
     buildUrl(page.pageId, page.pageToken),
   );
-  return mapProfile(data.business_discovery);
+  return mapProfile(data.business_discovery, handle);
 }
 
-function mapProfile(bd: any): InstagramProfile {
+function mapProfile(bd: any, handle?: string): InstagramProfile {
   return {
     id: bd.id,
-    username: bd.username,
-    name: bd.name || bd.username,
+    username: bd.username ?? handle ?? '',
+    name: bd.name || bd.username || handle || '',
     biography: bd.biography || '',
     profilePictureUrl: bd.profile_picture_url || '',
     followersCount: bd.followers_count || 0,
@@ -118,15 +120,17 @@ function mapProfile(bd: any): InstagramProfile {
 }
 
 /**
- * Diagnostic: tests all token/node combinations and returns raw Meta responses.
+ * Diagnostic: tests multiple handles and field variants to isolate the issue.
+ * Accepts an optional handle override (used by the ?handle= query param).
  */
-export async function debugMetaCredentials(testHandle = 'instagram'): Promise<Record<string, unknown>> {
+export async function debugMetaCredentials(
+  handleOverride?: string,
+): Promise<Record<string, unknown>> {
   const userToken = getAccessToken();
   const igUserId = getIGUserId();
-  const fields = 'id,username,name,biography,followers_count';
   const mask = (u: string) => u.replace(userToken, userToken.slice(0, 12) + '...');
 
-  // Fetch page info (page ID + page token)
+  // Fetch page token
   const accountsUrl =
     `${META_GRAPH_BASE}/me/accounts` +
     `?fields=id,name,access_token,instagram_business_account` +
@@ -134,14 +138,18 @@ export async function debugMetaCredentials(testHandle = 'instagram'): Promise<Re
   const accountsRes = (await fetch(accountsUrl).then((r) => r.json().catch(() => null))) as any;
   const pages: any[] = accountsRes?.data ?? [];
   const matchedPage = pages.find((p: any) => p.instagram_business_account?.id === igUserId);
-  const pageId = matchedPage?.id ?? '(no page found for this IG User ID)';
+  const pageId = matchedPage?.id ?? null;
   const pageToken = matchedPage?.access_token ?? null;
+  const tok = pageToken ?? userToken;
 
-  const buildUrl = (node: string, tok: string) =>
+  const fieldsWithUsername = 'id,username,name,biography,followers_count';
+  const fieldsNoUsername = 'id,name,biography,followers_count';
+
+  const buildUrl = (node: string, t: string, fields: string, handle: string) =>
     `${META_GRAPH_BASE}/${node}` +
     `?fields=business_discovery.fields(${fields})` +
-    `&username=${encodeURIComponent(testHandle)}` +
-    `&access_token=${tok}`;
+    `&username=${encodeURIComponent(handle)}` +
+    `&access_token=${t}`;
 
   const test = async (label: string, url: string) => {
     const r = await fetch(url);
@@ -149,25 +157,25 @@ export async function debugMetaCredentials(testHandle = 'instagram'): Promise<Re
     return { label, ok: r.ok, status: r.status, url: mask(url), response: body };
   };
 
-  const tests = await Promise.all([
-    test('igUserId + userToken', buildUrl(igUserId, userToken)),
-    ...(pageToken
-      ? [
-          test('igUserId + pageToken', buildUrl(igUserId, pageToken)),
-          test('pageId + pageToken', buildUrl(pageId, pageToken)),
-        ]
-      : []),
-    ...(pageId && pageId !== '(no page found for this IG User ID)'
-      ? [test('pageId + userToken', buildUrl(pageId, userToken))]
-      : []),
-  ]);
+  // Test handles: user-specified, or a set of known public business accounts
+  const handles = handleOverride
+    ? [handleOverride]
+    : ['nike', 'natgeo', 'zomato_in'];
+
+  const tests = await Promise.all(
+    handles.flatMap((h) => [
+      // Without "username" in fields (avoids name collision with the &username= param)
+      test(`igUserId | fields-no-username | handle=${h}`, buildUrl(igUserId, tok, fieldsNoUsername, h)),
+      // With "username" in fields (original approach — may cause (#100))
+      test(`igUserId | fields-with-username | handle=${h}`, buildUrl(igUserId, tok, fieldsWithUsername, h)),
+    ]),
+  );
 
   return {
     igUserId,
-    pageId,
-    userTokenPrefix: userToken.slice(0, 12) + '...',
+    pageId: pageId ?? '(not found)',
     pageTokenFound: !!pageToken,
-    pageTokenPrefix: pageToken ? pageToken.slice(0, 12) + '...' : null,
+    tokenUsed: pageToken ? 'pageToken' : 'userToken',
     tests,
   };
 }
