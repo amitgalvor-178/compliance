@@ -1,18 +1,19 @@
 /**
- * Adapted from galvor-tech/workflows src/services/transcription.ts
- * Downloads from Meta CDN using fetch (handles redirects + headers),
- * then transcribes with Azure Whisper.
+ * Downloads media from Meta CDN using fetch (handles redirects + browser UA),
+ * then transcribes with OpenAI whisper-1 (standard API, not Azure).
+ * Reuses OPENAI_MODERATION_API_KEY — no separate key needed.
  */
 
-import { openai } from '../config/openai.js';
+import OpenAI from 'openai';
 import { langfuse } from '../config/langfuse.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-// Azure deployment name for Whisper (set AZURE_WHISPER_DEPLOYMENT in Render env)
-function getWhisperDeployment(): string {
-  return process.env.AZURE_WHISPER_DEPLOYMENT || 'whisper';
+function getWhisperClient(): OpenAI {
+  const apiKey = process.env.OPENAI_MODERATION_API_KEY || process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error('No OpenAI API key found (OPENAI_MODERATION_API_KEY or OPENAI_API_KEY)');
+  return new OpenAI({ apiKey });
 }
 
 export interface TranscriptionResult {
@@ -37,7 +38,6 @@ export async function transcribeFromUrl(
 
   try {
     const tempDir = os.tmpdir();
-    // Derive extension from URL path (ignore query string)
     const urlPathname = new URL(mediaUrl).pathname;
     const ext = path.extname(urlPathname) || '.mp4';
     tempFilePath = path.join(tempDir, `compliance_${postId}_${Date.now()}${ext}`);
@@ -49,10 +49,10 @@ export async function transcribeFromUrl(
     if (stats.size === 0) throw new Error('Downloaded file is empty');
     span.event({ name: 'media-downloaded', metadata: { bytes: stats.size } });
 
-    const deployment = getWhisperDeployment();
-    const transcription = await openai.audio.transcriptions.create({
+    const client = getWhisperClient();
+    const transcription = await client.audio.transcriptions.create({
       file: fs.createReadStream(tempFilePath),
-      model: deployment,
+      model: 'whisper-1',
       language: 'hi', // most Indian creators post in Hindi/Hinglish
       response_format: 'text',
     });
