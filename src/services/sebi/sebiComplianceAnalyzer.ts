@@ -290,7 +290,7 @@ export async function analyzeSEBICompliance(
     const score = calculateSEBIScore(rules);
 
     trace.update({ output: { score, postResults: postResults.length } });
-    await langfuse.flushAsync();
+    langfuse.flushAsync().catch(() => {}); // fire-and-forget — don't block pipeline
 
     return {
       rules,
@@ -300,7 +300,7 @@ export async function analyzeSEBICompliance(
     };
   } catch (error: any) {
     trace.update({ output: { success: false, error: error.message } });
-    await langfuse.flushAsync();
+    langfuse.flushAsync().catch(() => {});
     throw error;
   }
 }

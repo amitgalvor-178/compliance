@@ -64,14 +64,14 @@ export async function transcribeFromUrl(
     span.update({ output: { wordCount, textLength: text.length } });
     span.end();
     trace.update({ output: { success: true, wordCount } });
-    await langfuse.flushAsync();
+    langfuse.flushAsync().catch(() => {});
 
     return { text, wordCount, processingTimeMs: Date.now() - startTime };
   } catch (error: any) {
     span.update({ level: 'ERROR', statusMessage: error.message });
     span.end();
     trace.update({ output: { success: false, error: error.message } });
-    await langfuse.flushAsync();
+    langfuse.flushAsync().catch(() => {});
     throw error;
   } finally {
     if (tempFilePath && fs.existsSync(tempFilePath)) {

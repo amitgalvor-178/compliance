@@ -118,16 +118,28 @@ export async function runCompliancePipeline(
   console.log(`[compliance] ${rawPosts.length} posts fetched`);
 
   // 3. Transcribe videos (best-effort, parallel)
+  // Cap at 5 videos; skip if caption is already detailed (>200 chars); 15s timeout per video
   onStep?.(1);
+  const MAX_TRANSCRIPTIONS = 5;
+  const TRANSCRIPTION_TIMEOUT_MS = 15_000;
+  let videosScheduled = 0;
+
   const postContents: PostContent[] = await Promise.all(
     rawPosts.map(async (post): Promise<PostContent> => {
       let transcript: string | null = null;
       let transcriptionFailed = false;
 
       const isVideo = post.mediaType === 'VIDEO' || post.mediaType === 'REEL';
-      if (isVideo && post.mediaUrl) {
+      const captionLong = (post.caption || '').length > 200;
+      const shouldTranscribe = isVideo && post.mediaUrl && !captionLong && videosScheduled < MAX_TRANSCRIPTIONS;
+
+      if (shouldTranscribe) {
+        videosScheduled++;
         try {
-          const result = await transcribeFromUrl(post.mediaUrl, post.id);
+          const timeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Transcription timeout')), TRANSCRIPTION_TIMEOUT_MS),
+          );
+          const result = await Promise.race([transcribeFromUrl(post.mediaUrl!, post.id), timeout]);
           transcript = result.text;
         } catch (err) {
           console.warn(`[compliance] Transcription failed for post ${post.id}:`, err);
