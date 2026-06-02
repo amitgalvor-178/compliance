@@ -27,3 +27,5 @@ services:
         sync: false
       - key: LANGFUSE_SAMPLE_RATE
         value: "1.0"
+      - key: COMPETITOR_BRANDS
+        value: "Groww,Zerodha,Upstox"

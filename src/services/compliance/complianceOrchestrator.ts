@@ -138,12 +138,22 @@ export async function runCompliancePipeline(
         transcript,
         timestamp: post.timestamp,
         mediaType: post.mediaType,
+        thumbnailUrl: post.thumbnailUrl || post.mediaUrl,
+        permalink: post.permalink,
         transcriptionFailed,
       };
     }),
   );
 
   const postsTranscribed = postContents.filter((p) => p.transcript !== null).length;
+
+  // Build postMedia map for frontend thumbnail + link display
+  const postMedia: Record<string, { thumbnail?: string; permalink?: string }> = {};
+  for (const p of postContents) {
+    if (p.thumbnailUrl || p.permalink) {
+      postMedia[p.postId] = { thumbnail: p.thumbnailUrl, permalink: p.permalink };
+    }
+  }
   console.log(`[compliance] Transcribed ${postsTranscribed}/${postContents.length} video posts`);
 
   // 4 & 5. Run SEBI + Brand Safety analysis in parallel
@@ -164,6 +174,7 @@ export async function runCompliancePipeline(
     creator: profile,
     postsAnalyzed: postContents.length,
     postsTranscribed,
+    postMedia,
     sebiCompliance,
     brandSafety,
     overallScore,

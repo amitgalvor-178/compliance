@@ -17,6 +17,7 @@ export interface InstagramPost {
   mediaType: 'IMAGE' | 'VIDEO' | 'CAROUSEL_ALBUM' | 'REEL';
   mediaUrl?: string;
   thumbnailUrl?: string;
+  permalink?: string;
   timestamp: string;
   likeCount?: number;
   commentsCount?: number;
@@ -30,6 +31,8 @@ export interface PostContent {
   transcript: string | null;
   timestamp: string;
   mediaType: string;
+  thumbnailUrl?: string;
+  permalink?: string;
   transcriptionFailed?: boolean;
 }
 
@@ -98,12 +101,18 @@ export interface BrandSafetyResult {
 
 // ─── Final Report ─────────────────────────────────────────────────────────────
 
+export interface PostMedia {
+  thumbnail?: string;
+  permalink?: string;
+}
+
 export interface ComplianceReport {
   reportId: string;
   createdAt: string;
   creator: InstagramProfile;
   postsAnalyzed: number;
   postsTranscribed: number;
+  postMedia: Record<string, PostMedia>;
   sebiCompliance: SEBIComplianceResult;
   brandSafety: BrandSafetyResult;
   overallScore: number;
