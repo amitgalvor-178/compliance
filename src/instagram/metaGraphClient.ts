@@ -12,13 +12,9 @@ function getAccessToken(): string {
 }
 
 function getIGUserId(): string {
-  const userId = process.env.META_IG_USER_ID;
-  if (!userId) throw new Error('META_IG_USER_ID is not set');
-  return userId;
-}
-
-function getPageId(): string {
-  return process.env.META_PAGE_ID || '';
+  const id = process.env.META_IG_USER_ID;
+  if (!id) throw new Error('META_IG_USER_ID is not set');
+  return id;
 }
 
 async function metaFetch<T>(url: string): Promise<T> {
@@ -31,15 +27,41 @@ async function metaFetch<T>(url: string): Promise<T> {
 }
 
 /**
+ * Exchange the stored User Access Token for a Page Access Token by calling
+ * /me/accounts. The Page Access Token is required for Business Discovery API.
+ * Returns null if the token is already a Page token or the page isn't found.
+ */
+async function fetchPageAccessToken(): Promise<{ pageId: string; pageToken: string } | null> {
+  const userToken = getAccessToken();
+  const igUserId = getIGUserId();
+
+  const url =
+    `${META_GRAPH_BASE}/me/accounts` +
+    `?fields=id,name,access_token,instagram_business_account` +
+    `&access_token=${userToken}`;
+
+  try {
+    const data = await metaFetch<{ data: any[] }>(url);
+    const page = data.data?.find((p: any) => p.instagram_business_account?.id === igUserId);
+    if (page?.access_token) {
+      return { pageId: page.id as string, pageToken: page.access_token as string };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Fetch public profile of any Instagram Business/Creator account using
- * the Business Discovery API from our own IG Business account.
+ * the Business Discovery API.
  *
- * Tries the IG User ID node first; falls back to Facebook Page ID node
- * if META_PAGE_ID is set, since some token types only work via the page node.
+ * Strategy:
+ *  1. Try IG User ID node + current token (works if token is already a Page token)
+ *  2. On (#100): exchange for Page Access Token via /me/accounts, retry with Page ID
  */
 export async function fetchCreatorProfile(handle: string): Promise<InstagramProfile> {
   const igUserId = getIGUserId();
-  const pageId = getPageId();
   const token = getAccessToken();
 
   const fields = [
@@ -53,29 +75,33 @@ export async function fetchCreatorProfile(handle: string): Promise<InstagramProf
     'website',
   ].join(',');
 
-  // Primary: call via IG User ID node (standard Business Discovery)
-  const igUrl =
-    `${META_GRAPH_BASE}/${igUserId}` +
+  const buildUrl = (nodeId: string, tok: string) =>
+    `${META_GRAPH_BASE}/${nodeId}` +
     `?fields=business_discovery.fields(${fields})` +
     `&username=${encodeURIComponent(handle)}` +
-    `&access_token=${token}`;
+    `&access_token=${tok}`;
 
+  // Attempt 1: IG User ID + stored token
   try {
-    const data = await metaFetch<{ business_discovery: any }>(igUrl);
+    const data = await metaFetch<{ business_discovery: any }>(buildUrl(igUserId, token));
     return mapProfile(data.business_discovery);
   } catch (err: any) {
-    // Fallback: call via Facebook Page ID node (works with Page Access Tokens)
-    if (pageId && err.message.includes('#100')) {
-      const pageUrl =
-        `${META_GRAPH_BASE}/${pageId}` +
-        `?fields=business_discovery.fields(${fields})` +
-        `&username=${encodeURIComponent(handle)}` +
-        `&access_token=${token}`;
-      const data = await metaFetch<{ business_discovery: any }>(pageUrl);
-      return mapProfile(data.business_discovery);
-    }
-    throw err;
+    if (!err.message.includes('#100')) throw err;
   }
+
+  // Attempt 2: exchange for Page Access Token and try with Page ID node
+  const page = await fetchPageAccessToken();
+  if (!page) {
+    throw new Error(
+      'Business Discovery failed and no Page Access Token could be obtained. ' +
+        'Ensure META_ACCESS_TOKEN is a valid User or Page Access Token with instagram_basic scope.',
+    );
+  }
+
+  const data = await metaFetch<{ business_discovery: any }>(
+    buildUrl(page.pageId, page.pageToken),
+  );
+  return mapProfile(data.business_discovery);
 }
 
 function mapProfile(bd: any): InstagramProfile {
@@ -92,56 +118,57 @@ function mapProfile(bd: any): InstagramProfile {
 }
 
 /**
- * Diagnostic: tests both IG User ID and Page ID approaches and returns
- * raw Meta API responses + token permissions.
+ * Diagnostic: tests all token/node combinations and returns raw Meta responses.
  */
-export async function debugMetaCredentials(testHandle = 'instagram'): Promise<{
-  igUserId: string;
-  pageId: string;
-  tokenPrefix: string;
-  igUserIdApproach: { url: string; response: unknown; ok: boolean };
-  pageIdApproach: { url: string; response: unknown; ok: boolean } | null;
-  permissionsResponse: unknown;
-}> {
-  const igUserId = process.env.META_IG_USER_ID || '';
-  const pageId = process.env.META_PAGE_ID || '';
-  const token = process.env.META_ACCESS_TOKEN || '';
-
+export async function debugMetaCredentials(testHandle = 'instagram'): Promise<Record<string, unknown>> {
+  const userToken = getAccessToken();
+  const igUserId = getIGUserId();
   const fields = 'id,username,name,biography,followers_count';
-  const mask = (u: string) => u.replace(token, token.slice(0, 12) + '...');
+  const mask = (u: string) => u.replace(userToken, userToken.slice(0, 12) + '...');
 
-  const igUrl =
-    `${META_GRAPH_BASE}/${igUserId}` +
+  // Fetch page info (page ID + page token)
+  const accountsUrl =
+    `${META_GRAPH_BASE}/me/accounts` +
+    `?fields=id,name,access_token,instagram_business_account` +
+    `&access_token=${userToken}`;
+  const accountsRes = (await fetch(accountsUrl).then((r) => r.json().catch(() => null))) as any;
+  const pages: any[] = accountsRes?.data ?? [];
+  const matchedPage = pages.find((p: any) => p.instagram_business_account?.id === igUserId);
+  const pageId = matchedPage?.id ?? '(no page found for this IG User ID)';
+  const pageToken = matchedPage?.access_token ?? null;
+
+  const buildUrl = (node: string, tok: string) =>
+    `${META_GRAPH_BASE}/${node}` +
     `?fields=business_discovery.fields(${fields})` +
     `&username=${encodeURIComponent(testHandle)}` +
-    `&access_token=${token}`;
+    `&access_token=${tok}`;
 
-  const pageUrl = pageId
-    ? `${META_GRAPH_BASE}/${pageId}` +
-      `?fields=business_discovery.fields(${fields})` +
-      `&username=${encodeURIComponent(testHandle)}` +
-      `&access_token=${token}`
-    : null;
+  const test = async (label: string, url: string) => {
+    const r = await fetch(url);
+    const body = await r.json().catch(() => null);
+    return { label, ok: r.ok, status: r.status, url: mask(url), response: body };
+  };
 
-  const permUrl = `${META_GRAPH_BASE}/me/permissions?access_token=${token}`;
-
-  const [igRes, pageRes, permRes] = await Promise.all([
-    fetch(igUrl).then(async (r) => ({ ok: r.ok, body: await r.json().catch(() => null) })),
-    pageUrl
-      ? fetch(pageUrl).then(async (r) => ({ ok: r.ok, body: await r.json().catch(() => null) }))
-      : Promise.resolve(null),
-    fetch(permUrl).then(async (r) => r.json().catch(() => null)),
+  const tests = await Promise.all([
+    test('igUserId + userToken', buildUrl(igUserId, userToken)),
+    ...(pageToken
+      ? [
+          test('igUserId + pageToken', buildUrl(igUserId, pageToken)),
+          test('pageId + pageToken', buildUrl(pageId, pageToken)),
+        ]
+      : []),
+    ...(pageId && pageId !== '(no page found for this IG User ID)'
+      ? [test('pageId + userToken', buildUrl(pageId, userToken))]
+      : []),
   ]);
 
   return {
     igUserId,
-    pageId: pageId || '(not set — add META_PAGE_ID env var)',
-    tokenPrefix: token.slice(0, 12) + (token.length > 12 ? '...' : ''),
-    igUserIdApproach: { url: mask(igUrl), response: igRes.body, ok: igRes.ok },
-    pageIdApproach: pageRes
-      ? { url: mask(pageUrl!), response: pageRes.body, ok: pageRes.ok }
-      : null,
-    permissionsResponse: permRes,
+    pageId,
+    userTokenPrefix: userToken.slice(0, 12) + '...',
+    pageTokenFound: !!pageToken,
+    pageTokenPrefix: pageToken ? pageToken.slice(0, 12) + '...' : null,
+    tests,
   };
 }
 
