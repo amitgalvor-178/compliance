@@ -1,16 +1,14 @@
 /**
  * SEBI compliance analyzer.
  *
- * Uses the same LLM structured-output + Zod pattern as
- * galvor-tech/workflows src/services/caption-analysis.ts — single LLM call
- * per post that checks all 4 LLM-evaluated SEBI rules at once.
+ * All posts are analyzed in a single batched LLM call instead of one call
+ * per post — reduces 12 roundtrips to 1.
  * MISSING_REG_DISCLOSURE is handled via regex on bio + transcript start.
  */
 
 import { z } from 'zod';
 import { openai } from '../../config/openai.js';
 import { langfuse } from '../../config/langfuse.js';
-import { analysisLimiter } from '../../config/ratelimiter.js';
 import {
   SEBIRuleId,
   RuleStatus,
@@ -22,11 +20,10 @@ import {
 } from '../../types/index.js';
 import {
   SEBI_RULES,
-  CRITICAL_SEBI_RULE_IDS,
   extractSEBIRegistration,
 } from './sebiRules.js';
 
-// ─── Zod schema for LLM output ────────────────────────────────────────────────
+// ─── Zod schema for batched LLM output ───────────────────────────────────────
 
 const FlagSchema = z.object({
   rule_id: z.string(),
@@ -36,8 +33,13 @@ const FlagSchema = z.object({
   explanation: z.string(),
 });
 
-const PostAnalysisSchema = z.object({
-  violations: z.array(FlagSchema),
+const BatchAnalysisSchema = z.object({
+  posts: z.array(
+    z.object({
+      post_id: z.string(),
+      violations: z.array(FlagSchema),
+    }),
+  ),
 });
 
 // ─── Prompt ───────────────────────────────────────────────────────────────────
@@ -46,103 +48,117 @@ function buildSystemPrompt(): string {
   const ruleDescriptions = SEBI_RULES.filter(
     (r) => r.id !== SEBIRuleId.MISSING_REG_DISCLOSURE,
   )
-    .map(
-      (r) => `### ${r.id}\nName: ${r.name}\nSource: ${r.source}\n${r.llmGuidance}`,
-    )
+    .map((r) => `### ${r.id}\nName: ${r.name}\nSource: ${r.source}\n${r.llmGuidance}`)
     .join('\n\n');
 
   return `You are a SEBI (Securities and Exchange Board of India) compliance analyst.
-Your task is to analyze Instagram post content (caption + video transcript) and identify violations of SEBI regulations.
+Analyze multiple Instagram posts and identify violations of SEBI regulations.
 
 Rules to check:
 ${ruleDescriptions}
 
-For each rule, return an entry in "violations" array with:
+For each post, return a "violations" array with ALL rules (even non-flagged ones):
 - rule_id: the rule identifier
-- is_flagged: true if a violation is detected
-- severity: how serious (critical/high/medium/low)
-- excerpt: the exact problematic text (max 150 chars), empty string if not flagged
-- explanation: brief reason for flagging (max 200 chars), empty string if not flagged
+- is_flagged: true only if a genuine violation is detected
+- severity: critical/high/medium/low
+- excerpt: exact problematic text (max 120 chars), empty string if not flagged
+- explanation: brief reason (max 180 chars), empty string if not flagged
 
-Return ALL rules in the violations array (even non-flagged ones with is_flagged: false).
 Be precise — only flag genuine violations, not general financial discussion.`;
 }
 
-// ─── Per-post LLM analysis ────────────────────────────────────────────────────
+function buildUserMessage(posts: PostContent[]): string {
+  const lines = posts.map((p, i) => {
+    const caption = (p.caption || '').slice(0, 400);
+    const transcript = p.transcript ? p.transcript.slice(0, 600) : '';
+    const parts = [`[POST ${i + 1}] post_id: ${p.postId}`];
+    if (caption) parts.push(`Caption: ${caption}`);
+    if (transcript) parts.push(`Transcript: ${transcript}`);
+    return parts.join('\n');
+  });
+  return lines.join('\n\n---\n\n');
+}
 
-async function analyzePostForSEBI(content: PostContent): Promise<RuleFlag[]> {
-  const text = [
-    content.caption ? `Caption: ${content.caption}` : '',
-    content.transcript ? `Transcript: ${content.transcript}` : '',
-  ]
-    .filter(Boolean)
-    .join('\n\n');
+// ─── Batched LLM analysis (single call for all posts) ─────────────────────────
 
-  if (!text.trim()) return [];
+async function analyzeAllPostsForSEBI(
+  posts: PostContent[],
+): Promise<Array<{ postId: string; flags: any[] }>> {
+  const postsWithContent = posts.filter(
+    (p) => (p.caption || '').trim() || (p.transcript || '').trim(),
+  );
+  if (postsWithContent.length === 0) return [];
 
   const ruleIds = SEBI_RULES.filter((r) => r.id !== SEBIRuleId.MISSING_REG_DISCLOSURE).map(
     (r) => r.id,
   );
 
-  const response = await analysisLimiter.schedule(
-    { id: `sebi-${content.postId}` },
-    async () =>
-      openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: buildSystemPrompt() },
-          {
-            role: 'user',
-            content: `Analyze this Instagram post content:\n\n${text}\n\nPost date: ${content.timestamp}`,
-          },
-        ],
-        temperature: 0.1,
-        response_format: {
-          type: 'json_schema',
-          json_schema: {
-            name: 'sebi_analysis',
-            strict: true,
-            schema: {
-              type: 'object',
-              properties: {
-                violations: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      rule_id: { type: 'string', enum: ruleIds },
-                      is_flagged: { type: 'boolean' },
-                      severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
-                      excerpt: { type: 'string' },
-                      explanation: { type: 'string' },
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      { role: 'system', content: buildSystemPrompt() },
+      { role: 'user', content: buildUserMessage(postsWithContent) },
+    ],
+    temperature: 0.1,
+    response_format: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'sebi_batch_analysis',
+        strict: true,
+        schema: {
+          type: 'object',
+          properties: {
+            posts: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  post_id: { type: 'string' },
+                  violations: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        rule_id: { type: 'string', enum: ruleIds },
+                        is_flagged: { type: 'boolean' },
+                        severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
+                        excerpt: { type: 'string' },
+                        explanation: { type: 'string' },
+                      },
+                      required: ['rule_id', 'is_flagged', 'severity', 'excerpt', 'explanation'],
+                      additionalProperties: false,
                     },
-                    required: ['rule_id', 'is_flagged', 'severity', 'excerpt', 'explanation'],
-                    additionalProperties: false,
                   },
                 },
+                required: ['post_id', 'violations'],
+                additionalProperties: false,
               },
-              required: ['violations'],
-              additionalProperties: false,
             },
           },
+          required: ['posts'],
+          additionalProperties: false,
         },
-      }),
-  );
+      },
+    },
+  });
 
   const raw = response.choices[0]?.message?.content;
   if (!raw) return [];
 
-  const parsed = PostAnalysisSchema.parse(JSON.parse(raw));
+  const parsed = BatchAnalysisSchema.parse(JSON.parse(raw));
 
-  return parsed.violations
-    .filter((v) => v.is_flagged)
-    .map((v) => ({
-      postId: content.postId,
-      excerpt: v.excerpt,
-      explanation: v.explanation,
-      severity: v.severity,
-      _ruleId: v.rule_id,
-    })) as any;
+  return parsed.posts.map((p) => ({
+    postId: p.post_id,
+    flags: p.violations
+      .filter((v) => v.is_flagged)
+      .map((v) => ({
+        postId: p.post_id,
+        excerpt: v.excerpt,
+        explanation: v.explanation,
+        severity: v.severity,
+        _ruleId: v.rule_id,
+      })),
+  }));
 }
 
 // ─── Registration disclosure check ───────────────────────────────────────────
@@ -153,7 +169,6 @@ function checkRegistrationDisclosure(
 ): { hasSEBIReg: boolean; regNumber?: string; flags: RuleFlag[] } {
   const bioReg = extractSEBIRegistration(profile.biography);
 
-  // Check if any post discusses financial/securities content
   const financialKeywords =
     /\b(stock|share|mutual fund|trading|invest|nifty|sensex|equity|portfolio|demat|broker|ipo|sebi)\b/i;
 
@@ -163,7 +178,6 @@ function checkRegistrationDisclosure(
   );
 
   if (financialPosts.length === 0) {
-    // Creator doesn't post financial content — rule not applicable
     return { hasSEBIReg: !!bioReg, regNumber: bioReg ?? undefined, flags: [] };
   }
 
@@ -179,7 +193,6 @@ function checkRegistrationDisclosure(
     });
   }
 
-  // Check if financial video transcripts start with SEBI reg number
   const videoFinancialPosts = financialPosts.filter(
     (p) =>
       (p.mediaType === 'VIDEO' || p.mediaType === 'REEL') &&
@@ -207,9 +220,10 @@ function checkRegistrationDisclosure(
 // ─── Rule aggregator ──────────────────────────────────────────────────────────
 
 function buildRuleResults(
-  allPostFlags: Array<{ postId: string; _ruleId: string } & RuleFlag>,
+  postResults: Array<{ postId: string; flags: any[] }>,
   regDisclosureFlags: RuleFlag[],
 ): Record<SEBIRuleId, RuleResult> {
+  const allPostFlags = postResults.flatMap((p) => p.flags);
   const results = {} as Record<SEBIRuleId, RuleResult>;
 
   for (const rule of SEBI_RULES) {
@@ -217,7 +231,7 @@ function buildRuleResults(
       rule.id === SEBIRuleId.MISSING_REG_DISCLOSURE
         ? regDisclosureFlags
         : allPostFlags
-            .filter((f) => (f as any)._ruleId === rule.id)
+            .filter((f) => f._ruleId === rule.id)
             .map(({ postId, excerpt, explanation, severity }) => ({
               postId,
               excerpt,
@@ -267,29 +281,23 @@ export async function analyzeSEBICompliance(
   });
 
   try {
-    // Analyze all posts in parallel (rate-limited by analysisLimiter)
-    const postFlagArrays = await Promise.allSettled(
-      posts.map((post) => analyzePostForSEBI(post)),
-    );
+    const [postResults, regCheck] = await Promise.all([
+      analyzeAllPostsForSEBI(posts),
+      Promise.resolve(checkRegistrationDisclosure(profile, posts)),
+    ]);
 
-    const allPostFlags: any[] = [];
-    for (const result of postFlagArrays) {
-      if (result.status === 'fulfilled') allPostFlags.push(...result.value);
-    }
-
-    // Check registration disclosure separately (regex-based)
-    const { hasSEBIReg, regNumber, flags: regFlags } = checkRegistrationDisclosure(
-      profile,
-      posts,
-    );
-
-    const rules = buildRuleResults(allPostFlags, regFlags);
+    const rules = buildRuleResults(postResults, regCheck.flags);
     const score = calculateSEBIScore(rules);
 
-    trace.update({ output: { score, flagCount: allPostFlags.length + regFlags.length } });
+    trace.update({ output: { score, postResults: postResults.length } });
     await langfuse.flushAsync();
 
-    return { rules, hasSEBIRegistration: hasSEBIReg, sebiRegistrationNumber: regNumber, score };
+    return {
+      rules,
+      hasSEBIRegistration: regCheck.hasSEBIReg,
+      sebiRegistrationNumber: regCheck.regNumber,
+      score,
+    };
   } catch (error: any) {
     trace.update({ output: { success: false, error: error.message } });
     await langfuse.flushAsync();
