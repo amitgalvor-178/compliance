@@ -19,6 +19,8 @@ services:
         sync: false
       - key: META_IG_USER_ID
         sync: false
+      - key: META_PAGE_ID
+        sync: false
       - key: LANGFUSE_PUBLIC_KEY
         sync: false
       - key: LANGFUSE_SECRET_KEY
