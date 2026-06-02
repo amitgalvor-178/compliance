@@ -64,21 +64,14 @@ export async function fetchCreatorProfile(handle: string): Promise<InstagramProf
   const igUserId = getIGUserId();
   const token = getAccessToken();
 
-  const responseFields = [
-    'id',
-    'name',
-    'biography',
-    'profile_picture_url',
-    'followers_count',
-    'media_count',
-    'website',
-  ].join(',');
+  // business_discovery.username(HANDLE){fields} is the correct v24.0 syntax.
+  // username is a traversal on the business_discovery edge, not a query param.
+  const responseFields =
+    'id,name,biography,profile_picture_url,followers_count,media_count,website';
 
-  // Meta field-argument syntax: username is embedded in the field expression,
-  // not passed as a separate &username= query param (which is broken in v24.0).
   const buildUrl = (tok: string) =>
     `${META_GRAPH_BASE}/${igUserId}` +
-    `?fields=business_discovery(username=${encodeURIComponent(handle)}).fields(${responseFields})` +
+    `?fields=business_discovery.username(${encodeURIComponent(handle)}){${responseFields}}` +
     `&access_token=${tok}`;
 
   // Attempt 1: stored token
@@ -138,19 +131,12 @@ export async function debugMetaCredentials(
   const pageToken = matchedPage?.access_token ?? null;
   const tok = pageToken ?? userToken;
 
-  const responseFields = 'id,name,biography,followers_count';
+  const responseFields = 'id,name,biography,followers_count,profile_picture_url,website';
 
-  // Syntax A: field-argument (username embedded in field expression — v24.0 approach)
-  const buildUrlFieldArg = (h: string, t: string) =>
+  // Correct format: business_discovery.username(HANDLE){fields}
+  const buildUrlTraversal = (h: string, t: string) =>
     `${META_GRAPH_BASE}/${igUserId}` +
-    `?fields=business_discovery(username=${encodeURIComponent(h)}).fields(${responseFields})` +
-    `&access_token=${t}`;
-
-  // Syntax B: query param (documented but apparently broken in v24.0)
-  const buildUrlQueryParam = (h: string, t: string) =>
-    `${META_GRAPH_BASE}/${igUserId}` +
-    `?fields=business_discovery.fields(${responseFields})` +
-    `&username=${encodeURIComponent(h)}` +
+    `?fields=business_discovery.username(${encodeURIComponent(h)}){${responseFields}}` +
     `&access_token=${t}`;
 
   const test = async (label: string, url: string) => {
@@ -159,13 +145,10 @@ export async function debugMetaCredentials(
     return { label, ok: r.ok, status: r.status, url: mask(url), response: body };
   };
 
-  const handles = handleOverride ? [handleOverride] : ['nike', 'natgeo', 'zomato_in'];
+  const handles = handleOverride ? [handleOverride] : ['bookingcom', 'nike', 'zomato_in'];
 
   const tests = await Promise.all(
-    handles.flatMap((h) => [
-      test(`field-arg | handle=${h}`, buildUrlFieldArg(h, tok)),
-      test(`query-param | handle=${h}`, buildUrlQueryParam(h, tok)),
-    ]),
+    handles.map((h) => test(`traversal | handle=${h}`, buildUrlTraversal(h, tok))),
   );
 
   return {
