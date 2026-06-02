@@ -24,7 +24,7 @@ import {
   type ComplianceReport,
 } from '../../types/index.js';
 
-const POST_LIMIT = 25;
+const POST_LIMIT = 12;
 
 // ─── Scoring ──────────────────────────────────────────────────────────────────
 

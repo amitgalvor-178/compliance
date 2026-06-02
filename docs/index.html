@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Merriweather+Sans:ital,wght@0,300;0,400;0,600;0,700;0,800;1,300&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -40,34 +41,13 @@
     nav {
       background: var(--navy);
       padding: 0 32px;
-      height: 52px;
+      height: 60px;
       display: flex;
       align-items: center;
-    }
-    .nav-brand {
-      display: flex;
-      align-items: center;
-      gap: 9px;
+      gap: 12px;
     }
     .nav-logo-mark {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 30px;
-      height: 30px;
       flex-shrink: 0;
-    }
-    .nav-name {
-      color: white;
-      font-weight: 700;
-      font-size: 16px;
-      letter-spacing: -0.3px;
-    }
-    .nav-divider {
-      width: 1px;
-      height: 16px;
-      background: var(--navy-light);
-      margin: 0 12px;
     }
     .nav-tag {
       color: var(--muted);
@@ -365,6 +345,28 @@
     .rules-col-sub { font-size: 11px; color: var(--muted); margin-top: 2px; font-weight: 300; }
     .rules-col-score { font-size: 22px; font-weight: 800; line-height: 1; }
 
+    /* Radar charts */
+    .charts-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border-bottom: 1px solid var(--border);
+    }
+    @media (max-width: 540px) { .charts-row { grid-template-columns: 1fr; } }
+    .chart-block {
+      padding: 24px 20px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .chart-block:first-child { border-right: 1px solid var(--border); }
+    .chart-block-title {
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--navy);
+      margin-bottom: 14px;
+      letter-spacing: -0.2px;
+    }
+
     /* Rule card */
     .rule-card {
       border: 1px solid var(--border); border-radius: 8px;
@@ -495,18 +497,14 @@
 
   <!-- Nav -->
   <nav>
-    <div class="nav-brand">
-      <img src="./galvor-logo.png" alt="Galvor" class="nav-logo-mark" style="width:30px;height:30px;border-radius:6px;object-fit:contain;background:#fff;" />
-      <span class="nav-name">Galvor</span>
-      <div class="nav-divider"></div>
-      <span class="nav-tag">Compliance Engine</span>
-    </div>
+    <img src="./galvor-logo.png" alt="Galvor" class="nav-logo-mark" style="width:44px;height:44px;border-radius:8px;object-fit:contain;background:#fff;" />
+    <span class="nav-tag">Compliance Engine</span>
   </nav>
 
   <!-- Hero -->
   <div class="hero">
     <h1>Creator Compliance Check</h1>
-    <p>Evaluate any Instagram creator for SEBI regulatory compliance and brand safety — across their last 25 posts.</p>
+    <p>Evaluate any Instagram creator for SEBI regulatory compliance and brand safety — across their last 12 posts.</p>
 
     <form class="handle-form" id="handle-form" onsubmit="startAnalysis(event)">
       <div class="input-wrapper">
@@ -615,8 +613,8 @@
       mediaCount: 412,
       website: 'https://example.com/course'
     },
-    postsAnalyzed: 25,
-    postsTranscribed: 11,
+    postsAnalyzed: 12,
+    postsTranscribed: 5,
     postMedia: {
       'post_a1b2c3': { permalink: 'https://www.instagram.com/p/demo1/' },
       'post_d4e5f6': { permalink: 'https://www.instagram.com/p/demo2/' },
@@ -905,6 +903,46 @@
       </div>`;
   }
 
+  let _sebiChart = null, _brandChart = null;
+  function drawRadar(canvasId, labels, data, color) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    // Destroy any existing chart on this canvas
+    const existing = Chart.getChart(canvas);
+    if (existing) existing.destroy();
+    new Chart(canvas, {
+      type: 'radar',
+      data: {
+        labels,
+        datasets: [{
+          data,
+          backgroundColor: color + '22',
+          borderColor: color,
+          borderWidth: 2,
+          pointBackgroundColor: color,
+          pointRadius: 4,
+          pointHoverRadius: 5,
+        }]
+      },
+      options: {
+        animation: false,
+        scales: {
+          r: {
+            min: 0, max: 100,
+            ticks: { display: false, stepSize: 50 },
+            grid: { color: '#e2e8f0' },
+            angleLines: { color: '#cbd5e1' },
+            pointLabels: {
+              font: { family: "'Merriweather Sans', sans-serif", size: 10, weight: '600' },
+              color: '#334155',
+            }
+          }
+        },
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      }
+    });
+  }
+
   function renderReport(r) {
     const vc = verdictColor(r.verdict);
     const vbg = verdictBg(r.verdict);
@@ -919,6 +957,23 @@
     const findings = (r.summaryNotes || []).map(n =>
       `<li class="finding-item">${esc(n)}</li>`
     ).join('');
+
+    // Derive per-rule values for radar (PASS=100, WARN=50, FAIL=0)
+    const statusScore = s => s === 'PASS' ? 100 : s === 'WARN' ? 50 : 0;
+    const sebiRadarData = [
+      'SEBI_UNREG_INVESTMENT_ADVICE',
+      'SEBI_GUARANTEED_RETURNS',
+      'SEBI_MISSING_REG_DISCLOSURE',
+      'SEBI_UNDISCLOSED_PAID_PROMO',
+      'SEBI_FRAUDULENT_COURSE',
+    ].map(id => statusScore(r.sebiCompliance.rules[id]?.status ?? 'PASS'));
+    const brandRadarData = [
+      'BRAND_PROFANITY',
+      'BRAND_HATE_SPEECH',
+      'BRAND_VIOLENCE',
+      'BRAND_PII_DISCLOSURE',
+      'BRAND_COMPETITOR_MENTION',
+    ].map(id => statusScore(r.brandSafety.rules[id]?.status ?? 'PASS'));
 
     document.getElementById('report-card').innerHTML = `
       <div class="report-header">
@@ -974,6 +1029,17 @@
         <ul class="findings-list">${findings}</ul>
       </div>
 
+      <div class="charts-row">
+        <div class="chart-block">
+          <div class="chart-block-title">SEBI Compliance</div>
+          <canvas id="sebi-radar" width="260" height="240" style="max-width:260px;"></canvas>
+        </div>
+        <div class="chart-block">
+          <div class="chart-block-title">Brand Safety</div>
+          <canvas id="brand-radar" width="260" height="240" style="max-width:260px;"></canvas>
+        </div>
+      </div>
+
       <div class="rules-grid">
         <div class="rules-col">
           <div class="rules-col-header">
@@ -1002,6 +1068,16 @@
         <div class="report-footer-text">SEBI sources: PR No. 14/2025 · Circular HO/(79)2026-MIRSD-PODMMC</div>
       </div>
     `;
+
+    // Render radar charts after DOM update
+    setTimeout(() => {
+      drawRadar('sebi-radar', [
+        'Inv. Advice', 'Return\nClaims', 'SEBI\nDisclosure', 'Paid\nPromo', 'Courses'
+      ], sebiRadarData, '#3b82f6');
+      drawRadar('brand-radar', [
+        'Profanity', 'Hate\nSpeech', 'Violence', 'PII\nDisclosure', 'Competitor'
+      ], brandRadarData, '#16a34a');
+    }, 0);
   }
 </script>
 </body>
