@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: galvor-compliance
+    runtime: node
+    buildCommand: pnpm install && pnpm run build
+    startCommand: pnpm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: AZURE_OPEN_AI_ENDPOINT
+        sync: false
+      - key: AZURE_OPEN_AI_KEY
+        sync: false
+      - key: OPENAI_MODERATION_API_KEY
+        sync: false
+      - key: META_ACCESS_TOKEN
+        sync: false
+      - key: META_IG_USER_ID
+        sync: false
+      - key: LANGFUSE_PUBLIC_KEY
+        sync: false
+      - key: LANGFUSE_SECRET_KEY
+        sync: false
+      - key: LANGFUSE_SAMPLE_RATE
+        value: "1.0"

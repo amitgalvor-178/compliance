@@ -593,6 +593,35 @@
       cursor: pointer;
     }
 
+    /* ── Demo button ── */
+    .demo-btn {
+      padding: 8px 16px;
+      background: rgba(59,130,246,0.15);
+      color: #93c5fd;
+      border: 1px solid rgba(59,130,246,0.3);
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .demo-btn:hover { background: rgba(59,130,246,0.25); }
+
+    /* ── No-backend banner ── */
+    .no-backend-banner {
+      background: #fef3c7;
+      border-bottom: 1px solid #fde68a;
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      color: #92400e;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .no-backend-banner a { color: #78350f; font-weight: 600; cursor: pointer; text-decoration: underline; }
+
     @media print {
       nav, .hero, #processing, #error-panel, .report-actions, #api-modal { display: none !important; }
       #report-section { display: block !important; padding: 0; }
@@ -602,6 +631,13 @@
   </style>
 </head>
 <body>
+
+  <!-- No-backend warning (shown only on GitHub Pages) -->
+  <div class="no-backend-banner" id="no-backend-banner" style="display:none;">
+    ⚠️ <strong>No backend configured.</strong> This page is hosted on GitHub Pages (static only).
+    <a onclick="openApiModal()">Set your backend URL</a> to run live checks, or
+    <a onclick="runDemo()">try the demo report</a>.
+  </div>
 
   <!-- Nav -->
   <nav>
@@ -634,8 +670,10 @@
       <button class="analyze-btn" type="submit" id="analyze-btn">Analyze →</button>
     </form>
 
-    <div class="api-config">
-      Connects to your deployed backend · <a onclick="openApiModal()">Configure API URL</a>
+    <div style="display:flex;gap:10px;justify-content:center;margin-top:12px;flex-wrap:wrap;">
+      <button class="demo-btn" type="button" onclick="runDemo()">▶ Try Demo Report</button>
+      <span style="font-size:12px;color:var(--slate);align-self:center;">or</span>
+      <a style="font-size:12px;color:var(--muted);align-self:center;cursor:pointer;text-decoration:underline;" onclick="openApiModal()">Configure backend URL</a>
     </div>
 
     <div class="feature-chips">
@@ -666,7 +704,10 @@
     <div class="error-icon">⚠️</div>
     <div class="error-title" id="error-title">Analysis failed</div>
     <div class="error-detail" id="error-detail"></div>
-    <button class="retry-btn" onclick="resetToForm()">Try Again</button>
+    <div style="display:flex;gap:10px;justify-content:center;margin-top:16px;flex-wrap:wrap;">
+      <button class="retry-btn" onclick="resetToForm()">← Try Again</button>
+      <button id="error-demo-btn" class="retry-btn" style="background:var(--blue);display:none;" onclick="runDemo()">▶ Try Demo Instead</button>
+    </div>
   </div>
 
   <!-- Report -->
@@ -698,8 +739,159 @@
 
   const STORAGE_KEY = 'galvor_compliance_api_url';
 
+  function isGitHubPages() {
+    return window.location.hostname.endsWith('github.io');
+  }
+
   function getApiBase() {
-    return localStorage.getItem(STORAGE_KEY) || window.location.origin;
+    return localStorage.getItem(STORAGE_KEY) || (isGitHubPages() ? null : window.location.origin);
+  }
+
+  // Show banner if on GitHub Pages with no configured backend
+  window.addEventListener('DOMContentLoaded', () => {
+    if (isGitHubPages() && !localStorage.getItem(STORAGE_KEY)) {
+      document.getElementById('no-backend-banner').style.display = 'flex';
+    }
+  });
+
+  // ── Demo Report ──────────────────────────────────────────────────────────────
+
+  const DEMO_REPORT = {
+    reportId: 'demo-0000-0000-0000',
+    createdAt: new Date().toISOString(),
+    creator: {
+      id: '17841400000000000',
+      username: 'demo_finfluencer',
+      name: 'Demo Finfluencer',
+      biography: 'Stock market tips & tricks 📈 | Wealth creation | DM for course details | Trading since 2019',
+      profilePictureUrl: '',
+      followersCount: 284000,
+      mediaCount: 412,
+      website: 'https://example.com/course'
+    },
+    postsAnalyzed: 25,
+    postsTranscribed: 11,
+    sebiCompliance: {
+      hasSEBIRegistration: false,
+      sebiRegistrationNumber: null,
+      score: 28,
+      rules: {
+        SEBI_UNREG_INVESTMENT_ADVICE: {
+          ruleId: 'SEBI_UNREG_INVESTMENT_ADVICE',
+          ruleName: 'Unregistered Investment Advice',
+          description: 'Providing specific buy/sell recommendations on individual stocks, mutual funds, or other securities without a SEBI RA or IA registration.',
+          status: 'FAIL',
+          flags: [
+            { postId: 'post_a1b2c3', excerpt: 'Buy Tata Motors now, target ₹900 in 3 months. Strong buy!', explanation: 'Explicit stock-specific buy recommendation with price target — requires SEBI RA registration', severity: 'critical' },
+            { postId: 'post_d4e5f6', excerpt: 'Multibagger alert 🚀 This smallcap will 5x in 2024. Buy before Monday.', explanation: 'Unregistered investment advice with specific return projection on a named security', severity: 'critical' },
+            { postId: 'post_g7h8i9', excerpt: 'Avoid HDFC Bank right now. Exit if you\'re holding. Strong sell signal.', explanation: 'Specific sell recommendation on a named security without SEBI registration', severity: 'high' }
+          ]
+        },
+        SEBI_GUARANTEED_RETURNS: {
+          ruleId: 'SEBI_GUARANTEED_RETURNS',
+          ruleName: 'Guaranteed / Assured Returns Claims',
+          description: 'Claiming risk-free, guaranteed, assured, or fixed returns on securities market investments.',
+          status: 'FAIL',
+          flags: [
+            { postId: 'post_j0k1l2', excerpt: 'Join my paid group — guaranteed 15% monthly returns, no loss strategy.', explanation: 'Explicit guaranteed returns claim combined with paid service promotion', severity: 'critical' },
+            { postId: 'post_m3n4o5', excerpt: 'This strategy has 100% win rate. Never lost a trade in 6 months.', explanation: 'Implied guaranteed returns / risk-free claim on a trading strategy', severity: 'high' }
+          ]
+        },
+        SEBI_MISSING_REG_DISCLOSURE: {
+          ruleId: 'SEBI_MISSING_REG_DISCLOSURE',
+          ruleName: 'Missing SEBI Registration Disclosure',
+          description: 'SEBI regulated entities must display their registered name and registration number on profile and at the beginning of financial content (effective May 1, 2026).',
+          status: 'FAIL',
+          flags: [
+            { postId: 'PROFILE', excerpt: 'Stock market tips & tricks 📈 | Wealth creation | DM for course details', explanation: 'Creator posts securities-related content but no SEBI registration number found in bio (required per SEBI Circular HO/79/2026 from May 1, 2026)', severity: 'high' },
+            { postId: 'post_a1b2c3', excerpt: 'Buy Tata Motors now, target ₹900 in 3 months. Strong buy!', explanation: 'Financial video content does not begin with SEBI registration number disclosure', severity: 'medium' }
+          ]
+        },
+        SEBI_UNDISCLOSED_PAID_PROMO: {
+          ruleId: 'SEBI_UNDISCLOSED_PAID_PROMO',
+          ruleName: 'Undisclosed Paid Promotion',
+          description: 'Promoting securities products without clearly disclosing the commercial relationship.',
+          status: 'WARN',
+          flags: [
+            { postId: 'post_p6q7r8', excerpt: 'Been using Zerodha for 2 years — best platform, open your account today!', explanation: 'Potential paid promotion of a broker platform without #ad or #sponsored disclosure', severity: 'medium' }
+          ]
+        },
+        SEBI_FRAUDULENT_COURSE: {
+          ruleId: 'SEBI_FRAUDULENT_COURSE',
+          ruleName: 'Fraudulent Trading Course / Seminar',
+          description: 'Promoting paid trading courses or seminars that claim guaranteed or high-return strategies.',
+          status: 'FAIL',
+          flags: [
+            { postId: 'post_s9t0u1', excerpt: 'My premium course — ₹4999 only. Students earning ₹50K/month after joining. DM now.', explanation: 'Paid trading course promoted with implied guaranteed income claims', severity: 'critical' }
+          ]
+        }
+      }
+    },
+    brandSafety: {
+      score: 72,
+      rules: {
+        BRAND_PROFANITY: {
+          ruleId: 'BRAND_PROFANITY',
+          ruleName: 'Profanity / Explicit Content',
+          description: 'Vulgar language, sexual or explicit content in captions or video audio.',
+          status: 'PASS',
+          flags: []
+        },
+        BRAND_HATE_SPEECH: {
+          ruleId: 'BRAND_HATE_SPEECH',
+          ruleName: 'Hate Speech / Discrimination',
+          description: 'Content targeting individuals or groups based on protected characteristics.',
+          status: 'PASS',
+          flags: []
+        },
+        BRAND_VIOLENCE: {
+          ruleId: 'BRAND_VIOLENCE',
+          ruleName: 'Violence / Graphic Content',
+          description: 'Depictions or glorification of violence, gore, or self-harm.',
+          status: 'PASS',
+          flags: []
+        },
+        BRAND_PII_DISCLOSURE: {
+          ruleId: 'BRAND_PII_DISCLOSURE',
+          ruleName: 'Personal Information Disclosure',
+          description: 'Exposure of personal data such as phone numbers, Aadhaar, PAN, or email addresses.',
+          status: 'WARN',
+          flags: [
+            { postId: 'post_v2w3x4', excerpt: '9876543210', explanation: 'Phone number detected in post caption', severity: 'medium' }
+          ]
+        },
+        BRAND_COMPETITOR_MENTION: {
+          ruleId: 'BRAND_COMPETITOR_MENTION',
+          ruleName: 'Competitor Brand Mention',
+          description: 'Direct mention of competitor brands in content.',
+          status: 'PASS',
+          flags: []
+        }
+      }
+    },
+    overallScore: 44,
+    verdict: 'NON_COMPLIANT',
+    summaryNotes: [
+      'No SEBI registration number detected in creator bio',
+      '4 SEBI rule(s) violated: Unregistered Investment Advice, Guaranteed / Assured Returns Claims, Missing SEBI Registration Disclosure, Fraudulent Trading Course / Seminar',
+      '1 brand safety issue(s): Personal Information Disclosure',
+      'Creator actively promotes paid trading courses with return guarantees — high regulatory risk'
+    ]
+  };
+
+  function runDemo() {
+    resetToForm();
+    renderReport(DEMO_REPORT);
+    document.getElementById('analyze-btn').disabled = false;
+    const rs = document.getElementById('report-section');
+    rs.style.display = 'block';
+    // Add demo watermark badge
+    const card = document.getElementById('report-card');
+    const demoTag = document.createElement('div');
+    demoTag.style.cssText = 'text-align:center;padding:6px;background:#fef3c7;font-size:11px;color:#92400e;font-weight:600;';
+    demoTag.textContent = '⚡ DEMO REPORT — Sample data only. Connect a backend to analyze real creators.';
+    card.prepend(demoTag);
+    window.scrollTo({ top: document.getElementById('report-section').offsetTop - 20, behavior: 'smooth' });
   }
 
   function openApiModal() {
@@ -772,6 +964,16 @@
     const handle = document.getElementById('handle-input').value.trim().replace(/^@/, '');
     if (!handle) return;
 
+    const apiBase = getApiBase();
+    if (!apiBase) {
+      showError(
+        'No backend configured',
+        'This page is hosted on GitHub Pages and cannot run the analysis directly. Deploy the Node.js backend and click "Configure backend URL", or try the demo report.'
+      );
+      document.getElementById('error-demo-btn').style.display = 'inline-block';
+      return;
+    }
+
     document.getElementById('analyze-btn').disabled = true;
     document.getElementById('analyzing-handle').textContent = '@' + handle;
 
@@ -780,24 +982,34 @@
 
     let jobId;
     try {
-      const res = await fetch(getApiBase() + '/api/compliance/analyze', {
+      const res = await fetch(apiBase + '/api/compliance/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ handle }),
       });
+      // Guard against HTML error pages returned by proxy/CDN
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) {
+        throw new Error('Backend returned a non-JSON response. Check that your API URL is correct.');
+      }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to start analysis');
       jobId = data.jobId;
     } catch (err) {
       clearStepTimers();
-      showError('Could not connect to backend', err.message + '. Configure the API URL below the search bar.');
+      const isConnErr = err.message.includes('Failed to fetch') || err.message.includes('NetworkError');
+      showError(
+        isConnErr ? 'Cannot reach backend' : 'Could not start analysis',
+        err.message
+      );
+      document.getElementById('error-demo-btn').style.display = 'inline-block';
       return;
     }
 
     // Poll every 4s
     window._pollInterval = setInterval(async () => {
       try {
-        const res = await fetch(getApiBase() + '/api/compliance/status/' + jobId);
+        const res = await fetch(apiBase + '/api/compliance/status/' + jobId);
         const { status, error } = await res.json();
         if (status === 'done') {
           clearInterval(window._pollInterval);
@@ -815,7 +1027,7 @@
 
   async function loadReport(jobId) {
     try {
-      const res = await fetch(getApiBase() + '/api/compliance/report/' + jobId + '/json');
+      const res = await fetch((getApiBase() || '') + '/api/compliance/report/' + jobId + '/json');
       const report = await res.json();
       renderReport(report);
       document.getElementById('analyze-btn').disabled = false;
@@ -829,6 +1041,7 @@
     document.getElementById('error-title').textContent = title;
     document.getElementById('error-detail').textContent = detail || '';
     document.getElementById('analyze-btn').disabled = false;
+    document.getElementById('error-demo-btn').style.display = 'none'; // reset; callers show it explicitly
     showSection('error-panel');
   }
 
