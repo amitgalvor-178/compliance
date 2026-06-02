@@ -1,6 +1,7 @@
 /**
  * Adapted from galvor-tech/workflows src/services/transcription.ts
- * Removed GCS dependency — downloads directly from the Meta-provided media URL.
+ * Downloads from Meta CDN using fetch (handles redirects + headers),
+ * then transcribes with Azure Whisper.
  */
 
 import { openai } from '../config/openai.js';
@@ -8,8 +9,11 @@ import { langfuse } from '../config/langfuse.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import https from 'https';
-import http from 'http';
+
+// Azure deployment name for Whisper (set AZURE_WHISPER_DEPLOYMENT in Render env)
+function getWhisperDeployment(): string {
+  return process.env.AZURE_WHISPER_DEPLOYMENT || 'whisper';
+}
 
 export interface TranscriptionResult {
   text: string;
@@ -25,7 +29,7 @@ export async function transcribeFromUrl(
 
   const trace = langfuse.trace({
     name: 'compliance-transcribe-media',
-    metadata: { postId, mediaUrl },
+    metadata: { postId },
   });
 
   const span = trace.span({ name: 'whisper-transcription' });
@@ -33,20 +37,23 @@ export async function transcribeFromUrl(
 
   try {
     const tempDir = os.tmpdir();
-    const urlPath = new URL(mediaUrl).pathname;
-    const ext = path.extname(urlPath) || '.mp4';
+    // Derive extension from URL path (ignore query string)
+    const urlPathname = new URL(mediaUrl).pathname;
+    const ext = path.extname(urlPathname) || '.mp4';
     tempFilePath = path.join(tempDir, `compliance_${postId}_${Date.now()}${ext}`);
 
-    span.event({ name: 'downloading-media', metadata: { mediaUrl } });
+    span.event({ name: 'downloading-media' });
     await downloadToFile(mediaUrl, tempFilePath);
 
     const stats = fs.statSync(tempFilePath);
+    if (stats.size === 0) throw new Error('Downloaded file is empty');
     span.event({ name: 'media-downloaded', metadata: { bytes: stats.size } });
 
+    const deployment = getWhisperDeployment();
     const transcription = await openai.audio.transcriptions.create({
       file: fs.createReadStream(tempFilePath),
-      model: 'whisper-1',
-      language: 'en',
+      model: deployment,
+      language: 'hi', // most Indian creators post in Hindi/Hinglish
       response_format: 'text',
     });
 
@@ -73,39 +80,21 @@ export async function transcribeFromUrl(
   }
 }
 
-function downloadToFile(url: string, dest: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
-    const protocol = url.startsWith('https') ? https : http;
-
-    protocol
-      .get(url, (res) => {
-        // Follow redirects (Meta CDN often redirects)
-        if (
-          res.statusCode &&
-          res.statusCode >= 300 &&
-          res.statusCode < 400 &&
-          res.headers.location
-        ) {
-          file.close(() => {
-            fs.unlinkSync(dest);
-            downloadToFile(res.headers.location!, dest).then(resolve).catch(reject);
-          });
-          return;
-        }
-
-        if (res.statusCode && res.statusCode >= 400) {
-          file.close(() => fs.unlink(dest, () => {}));
-          reject(new Error(`HTTP ${res.statusCode} downloading media`));
-          return;
-        }
-
-        res.pipe(file);
-        file.on('finish', () => file.close(() => resolve()));
-      })
-      .on('error', (err) => {
-        fs.unlink(dest, () => {});
-        reject(err);
-      });
+async function downloadToFile(url: string, dest: string): Promise<void> {
+  const res = await fetch(url, {
+    // Mimic a browser UA — Meta CDN can return 403 to bare Node requests
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      Accept: 'video/mp4,video/*,*/*;q=0.9',
+    },
+    redirect: 'follow',
   });
+
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} downloading media from CDN`);
+  }
+
+  const buffer = await res.arrayBuffer();
+  fs.writeFileSync(dest, Buffer.from(buffer));
 }

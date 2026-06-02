@@ -29,3 +29,5 @@ services:
         value: "1.0"
       - key: COMPETITOR_BRANDS
         value: "Groww,Zerodha,Upstox"
+      - key: AZURE_WHISPER_DEPLOYMENT
+        sync: false
