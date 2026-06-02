@@ -10,6 +10,7 @@ const router = Router();
 // In-memory job store (sufficient for this service — jobs expire after 1h)
 interface Job {
   status: 'processing' | 'done' | 'error';
+  step: number; // 0=fetching 1=transcribing 2=sebi 3=brand-safety 4=done
   report?: ComplianceReport;
   error?: string;
   startedAt: number;
@@ -37,16 +38,20 @@ router.post('/analyze', async (req: Request, res: Response) => {
   const cleanHandle = handle.trim().replace(/^@/, '');
   const jobId = uuidv4();
 
-  jobs.set(jobId, { status: 'processing', startedAt: Date.now() });
+  const job: Job = { status: 'processing', step: 0, startedAt: Date.now() };
+  jobs.set(jobId, job);
 
   // Run pipeline in background — do not await
-  runCompliancePipeline(cleanHandle)
+  runCompliancePipeline(cleanHandle, (step) => { job.step = step; })
     .then((report) => {
-      jobs.set(jobId, { status: 'done', report, startedAt: Date.now() });
+      job.status = 'done';
+      job.step = 4;
+      job.report = report;
     })
     .catch((err: Error) => {
       console.error(`[compliance] Pipeline failed for @${cleanHandle}:`, err.message);
-      jobs.set(jobId, { status: 'error', error: err.message, startedAt: Date.now() });
+      job.status = 'error';
+      job.error = err.message;
     });
 
   res.json({ jobId });
@@ -59,7 +64,7 @@ router.get('/status/:jobId', (req: Request, res: Response) => {
     res.status(404).json({ error: 'Job not found' });
     return;
   }
-  res.json({ status: job.status, error: job.error });
+  res.json({ status: job.status, step: job.step, error: job.error });
 });
 
 // GET /api/compliance/report/:jobId — returns full HTML report

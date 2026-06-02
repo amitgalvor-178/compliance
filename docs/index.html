@@ -723,9 +723,6 @@
   }
 
   // ── Step progression ─────────────────────────────────────────────────────────
-  const STEP_TIMINGS = [0, 15000, 45000, 90000, 150000];
-  let stepTimers = [];
-
   function activateStep(idx) {
     for (let i = 0; i < 5; i++) {
       const el = document.getElementById('step-' + i);
@@ -735,14 +732,8 @@
       else if (i === idx) el.classList.add('active');
     }
   }
-  function startStepProgression() {
-    activateStep(0);
-    STEP_TIMINGS.forEach((ms, idx) => {
-      if (idx === 0) return;
-      stepTimers.push(setTimeout(() => activateStep(idx), ms));
-    });
-  }
-  function clearStepTimers() { stepTimers.forEach(clearTimeout); stepTimers = []; }
+  function startStepProgression() { activateStep(0); }
+  function clearStepTimers() {}
 
   // ── State ────────────────────────────────────────────────────────────────────
   function showSection(id) {
@@ -802,19 +793,18 @@
     window._pollInterval = setInterval(async () => {
       try {
         const res = await fetch(apiBase + '/api/compliance/status/' + jobId);
-        const { status, error } = await res.json();
+        const { status, step, error } = await res.json();
+        if (typeof step === 'number') activateStep(step);
         if (status === 'done') {
           clearInterval(window._pollInterval);
-          clearStepTimers();
           activateStep(4);
           setTimeout(() => loadReport(jobId), 600);
         } else if (status === 'error') {
           clearInterval(window._pollInterval);
-          clearStepTimers();
           showError('Analysis failed', error || 'Unknown error');
         }
       } catch (_) {}
-    }, 4000);
+    }, 2000);
   }
 
   async function loadReport(jobId) {

@@ -104,10 +104,12 @@ function buildSummaryNotes(
 
 export async function runCompliancePipeline(
   instagramHandle: string,
+  onStep?: (step: number) => void,
 ): Promise<ComplianceReport> {
   console.log(`[compliance] Starting pipeline for @${instagramHandle}`);
 
   // 1. Fetch profile
+  onStep?.(0);
   const profile = await fetchCreatorProfile(instagramHandle);
   console.log(`[compliance] Profile fetched: ${profile.name} (${profile.followersCount} followers)`);
 
@@ -116,6 +118,7 @@ export async function runCompliancePipeline(
   console.log(`[compliance] ${rawPosts.length} posts fetched`);
 
   // 3. Transcribe videos (best-effort, parallel)
+  onStep?.(1);
   const postContents: PostContent[] = await Promise.all(
     rawPosts.map(async (post): Promise<PostContent> => {
       let transcript: string | null = null;
@@ -156,17 +159,19 @@ export async function runCompliancePipeline(
   }
   console.log(`[compliance] Transcribed ${postsTranscribed}/${postContents.length} video posts`);
 
-  // 4 & 5. Run SEBI + Brand Safety analysis in parallel
-  const [sebiCompliance, brandSafety] = await Promise.all([
-    analyzeSEBICompliance(profile, postContents),
-    analyzeBrandSafety(postContents),
-  ]);
+  // 4. SEBI analysis
+  onStep?.(2);
+  const sebiCompliance = await analyzeSEBICompliance(profile, postContents);
+
+  // 5. Brand safety analysis
+  onStep?.(3);
+  const brandSafety = await analyzeBrandSafety(postContents);
 
   console.log(
     `[compliance] SEBI score: ${sebiCompliance.score} | Brand safety score: ${brandSafety.score}`,
   );
 
-  // 6. Calculate overall score + verdict
+  // 6. Score + verdict
   const overallScore = calculateOverallScore(sebiCompliance.score, brandSafety.score);
   const verdict = calculateVerdict(overallScore, sebiCompliance);
 
