@@ -111,8 +111,8 @@ export async function runCompliancePipeline(
   const profile = await fetchCreatorProfile(instagramHandle);
   console.log(`[compliance] Profile fetched: ${profile.name} (${profile.followersCount} followers)`);
 
-  // 2. Fetch posts
-  const rawPosts = await fetchCreatorPosts(profile.id, POST_LIMIT);
+  // 2. Fetch posts via Business Discovery (direct /{id}/media is blocked for external accounts)
+  const rawPosts = await fetchCreatorPosts(instagramHandle, POST_LIMIT);
   console.log(`[compliance] ${rawPosts.length} posts fetched`);
 
   // 3. Transcribe videos (best-effort, parallel)

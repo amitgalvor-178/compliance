@@ -161,15 +161,19 @@ export async function debugMetaCredentials(
 }
 
 /**
- * Fetch the most recent posts for a creator using their IG user ID.
+ * Fetch the most recent posts for a creator via Business Discovery.
+ * Direct /{creatorIgId}/media calls are blocked for external accounts —
+ * posts must be accessed through the business_discovery edge.
  */
 export async function fetchCreatorPosts(
-  creatorIgId: string,
+  handle: string,
   limit = 25,
 ): Promise<InstagramPost[]> {
-  const token = getAccessToken();
+  const igUserId = getIGUserId();
+  const pageInfo = await fetchPageAccessToken();
+  const token = pageInfo?.pageToken ?? getAccessToken();
 
-  const fields = [
+  const mediaFields = [
     'id',
     'caption',
     'media_type',
@@ -181,14 +185,14 @@ export async function fetchCreatorPosts(
   ].join(',');
 
   const url =
-    `${META_GRAPH_BASE}/${creatorIgId}/media` +
-    `?fields=${fields}` +
-    `&limit=${limit}` +
+    `${META_GRAPH_BASE}/${igUserId}` +
+    `?fields=business_discovery.username(${encodeURIComponent(handle)}){media.limit(${limit}){${mediaFields}}}` +
     `&access_token=${token}`;
 
-  const data = await metaFetch<{ data: any[] }>(url);
+  const data = await metaFetch<{ business_discovery: { media: { data: any[] } } }>(url);
+  const posts = data.business_discovery?.media?.data ?? [];
 
-  return (data.data || []).map(
+  return posts.map(
     (post: any): InstagramPost => ({
       id: post.id,
       caption: post.caption,
