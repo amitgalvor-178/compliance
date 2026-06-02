@@ -114,8 +114,8 @@ function moderationToFlags(
   const out = { profanity: [] as RuleFlag[], hateSpeech: [] as RuleFlag[], violence: [] as RuleFlag[] };
   if (!modResult.flagged) return out;
 
-  const scores = modResult.category_scores as Record<string, number>;
-  const categories = modResult.categories as Record<string, boolean>;
+  const scores = modResult.category_scores as unknown as Record<string, number>;
+  const categories = modResult.categories as unknown as Record<string, boolean>;
 
   if (categories['sexual'] || scores['sexual'] > 0.5) {
     out.profanity.push({
@@ -206,7 +206,7 @@ function flagsToRuleResult(
 }
 
 function calculateBrandSafetyScore(rules: Record<BrandSafetyRuleId, RuleResult>): number {
-  const points = Object.values(rules).map((r) => {
+  const points: number[] = Object.values(rules).map((r) => {
     if (r.status === RuleStatus.PASS) return 100;
     if (r.status === RuleStatus.WARN) return 60;
     return 0;

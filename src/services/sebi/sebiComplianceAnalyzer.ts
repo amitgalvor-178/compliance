@@ -7,14 +7,13 @@
  * MISSING_REG_DISCLOSURE is handled via regex on bio + transcript start.
  */
 
-import OpenAI from 'openai';
 import { z } from 'zod';
+import { openai } from '../../config/openai.js';
 import { langfuse } from '../../config/langfuse.js';
 import { analysisLimiter } from '../../config/ratelimiter.js';
 import {
   SEBIRuleId,
   RuleStatus,
-  OverallVerdict,
   type PostContent,
   type InstagramProfile,
   type SEBIComplianceResult,
@@ -69,26 +68,9 @@ Return ALL rules in the violations array (even non-flagged ones with is_flagged:
 Be precise — only flag genuine violations, not general financial discussion.`;
 }
 
-// Azure OpenAI client (reused from config)
-let _openai: OpenAI | null = null;
-function getOpenAI(): OpenAI {
-  if (!_openai) {
-    const { AzureOpenAI } = require('openai');
-    _openai = new AzureOpenAI({
-      endpoint: process.env.AZURE_OPEN_AI_ENDPOINT!,
-      apiKey: process.env.AZURE_OPEN_AI_KEY!,
-      apiVersion: '2024-08-01-preview',
-    });
-  }
-  return _openai!;
-}
-
 // ─── Per-post LLM analysis ────────────────────────────────────────────────────
 
-async function analyzePostForSEBI(
-  content: PostContent,
-  openaiClient: OpenAI,
-): Promise<RuleFlag[]> {
+async function analyzePostForSEBI(content: PostContent): Promise<RuleFlag[]> {
   const text = [
     content.caption ? `Caption: ${content.caption}` : '',
     content.transcript ? `Transcript: ${content.transcript}` : '',
@@ -105,7 +87,7 @@ async function analyzePostForSEBI(
   const response = await analysisLimiter.schedule(
     { id: `sebi-${content.postId}` },
     async () =>
-      openaiClient.chat.completions.create({
+      openai.chat.completions.create({
         model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: buildSystemPrompt() },
@@ -265,7 +247,7 @@ function buildRuleResults(
 }
 
 function calculateSEBIScore(rules: Record<SEBIRuleId, RuleResult>): number {
-  const points = Object.values(rules).map((r) => {
+  const points: number[] = Object.values(rules).map((r) => {
     if (r.status === RuleStatus.PASS) return 100;
     if (r.status === RuleStatus.WARN) return 60;
     return 0;
@@ -285,16 +267,9 @@ export async function analyzeSEBICompliance(
   });
 
   try {
-    const { AzureOpenAI } = await import('openai');
-    const openaiClient = new AzureOpenAI({
-      endpoint: process.env.AZURE_OPEN_AI_ENDPOINT!,
-      apiKey: process.env.AZURE_OPEN_AI_KEY!,
-      apiVersion: '2024-08-01-preview',
-    }) as unknown as OpenAI;
-
     // Analyze all posts in parallel (rate-limited by analysisLimiter)
     const postFlagArrays = await Promise.allSettled(
-      posts.map((post) => analyzePostForSEBI(post, openaiClient)),
+      posts.map((post) => analyzePostForSEBI(post)),
     );
 
     const allPostFlags: any[] = [];

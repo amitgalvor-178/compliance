@@ -53,7 +53,7 @@ router.post('/analyze', async (req: Request, res: Response) => {
 
 // GET /api/compliance/status/:jobId
 router.get('/status/:jobId', (req: Request, res: Response) => {
-  const job = jobs.get(req.params.jobId);
+  const job = jobs.get(String(req.params.jobId));
   if (!job) {
     res.status(404).json({ error: 'Job not found' });
     return;
@@ -63,7 +63,7 @@ router.get('/status/:jobId', (req: Request, res: Response) => {
 
 // GET /api/compliance/report/:jobId — returns full HTML report
 router.get('/report/:jobId', (req: Request, res: Response) => {
-  const job = jobs.get(req.params.jobId);
+  const job = jobs.get(String(req.params.jobId));
   if (!job) {
     res.status(404).send('<p>Report not found</p>');
     return;
@@ -80,7 +80,7 @@ router.get('/report/:jobId', (req: Request, res: Response) => {
 
 // GET /api/compliance/report/:jobId/json — raw JSON (useful for debugging)
 router.get('/report/:jobId/json', (req: Request, res: Response) => {
-  const job = jobs.get(req.params.jobId);
+  const job = jobs.get(String(req.params.jobId));
   if (!job || job.status !== 'done' || !job.report) {
     res.status(404).json({ error: 'Report not ready' });
     return;
