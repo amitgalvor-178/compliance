@@ -432,6 +432,12 @@
       margin-bottom: 3px; font-weight: 300;
     }
     .flag-explanation { font-size: 11px; color: var(--muted); font-weight: 300; line-height: 1.5; }
+    .flag-timestamp {
+      display: inline-flex; align-items: center; gap: 3px;
+      font-size: 10px; font-weight: 600; color: var(--blue);
+      background: #eff6ff; border: 1px solid #bfdbfe;
+      border-radius: 4px; padding: 1px 6px; margin-top: 4px;
+    }
     .more-flags { font-size: 11px; color: var(--muted); margin-top: 4px; font-weight: 300; }
 
     /* Footer */
@@ -870,6 +876,7 @@
               </div>
               ${f.excerpt ? `<div class="flag-excerpt">"${esc(f.excerpt.slice(0,120))}${f.excerpt.length>120?'…':''}"</div>` : ''}
               <div class="flag-explanation">${esc(f.explanation)}</div>
+              ${f.timestampSeconds != null ? `<div><span class="flag-timestamp">▶ ${Math.floor(f.timestampSeconds/60)}:${String(f.timestampSeconds%60).padStart(2,'0')} in video</span></div>` : ''}
             </div>
           </div>`;
         }).join('')}

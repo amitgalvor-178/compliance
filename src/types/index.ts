@@ -25,10 +25,17 @@ export interface InstagramPost {
 
 // ─── Analyzed content (caption + optional transcript) ────────────────────────
 
+export interface TranscriptSegment {
+  start: number; // seconds
+  end: number;
+  text: string;
+}
+
 export interface PostContent {
   postId: string;
   caption: string;
   transcript: string | null;
+  transcriptSegments?: TranscriptSegment[];
   timestamp: string;
   mediaType: string;
   thumbnailUrl?: string;
@@ -57,6 +64,7 @@ export interface RuleFlag {
   excerpt: string;
   explanation: string;
   severity: Severity;
+  timestampSeconds?: number; // populated when excerpt is matched to a video segment
 }
 
 export interface RuleResult {

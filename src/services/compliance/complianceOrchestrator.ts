@@ -22,6 +22,8 @@ import {
   OverallVerdict,
   type PostContent,
   type ComplianceReport,
+  type TranscriptSegment,
+  type RuleFlag,
 } from '../../types/index.js';
 
 const POST_LIMIT = 12;
@@ -101,6 +103,55 @@ function buildSummaryNotes(
   return notes;
 }
 
+// ─── Timestamp annotation ─────────────────────────────────────────────────────
+
+function findTimestamp(excerpt: string, segments: TranscriptSegment[]): number | null {
+  if (!excerpt || !segments.length) return null;
+
+  const needle = excerpt.toLowerCase().slice(0, 80);
+
+  // Build full text with character-offset tracking
+  let charPos = 0;
+  const segRanges = segments.map((seg) => {
+    const start = charPos;
+    charPos += seg.text.length + 1;
+    return { seg, start, end: charPos };
+  });
+
+  const fullText = segments.map((s) => s.text).join(' ').toLowerCase();
+  const idx = fullText.indexOf(needle);
+  if (idx !== -1) {
+    const match = segRanges.find((r) => r.start <= idx && idx < r.end);
+    if (match) return match.seg.start;
+  }
+
+  // Fuzzy fallback: find segment with most keyword overlap
+  const keywords = needle.split(/\s+/).filter((w) => w.length > 3);
+  if (!keywords.length) return null;
+
+  let bestSeg: TranscriptSegment | null = null;
+  let bestScore = 0;
+  for (const seg of segments) {
+    const segLow = seg.text.toLowerCase();
+    const score = keywords.filter((w) => segLow.includes(w)).length;
+    if (score > bestScore) { bestScore = score; bestSeg = seg; }
+  }
+  return bestScore > 0 ? bestSeg!.start : null;
+}
+
+function annotateTimestamps(
+  flags: RuleFlag[],
+  segmentMap: Map<string, TranscriptSegment[]>,
+): void {
+  for (const flag of flags) {
+    if (flag.timestampSeconds != null || !flag.excerpt) continue;
+    const segments = segmentMap.get(flag.postId);
+    if (!segments?.length) continue;
+    const ts = findTimestamp(flag.excerpt, segments);
+    if (ts != null) flag.timestampSeconds = Math.round(ts);
+  }
+}
+
 // ─── Main export ─────────────────────────────────────────────────────────────
 
 export async function runCompliancePipeline(
@@ -128,6 +179,7 @@ export async function runCompliancePipeline(
   const postContents: PostContent[] = await Promise.all(
     rawPosts.map(async (post): Promise<PostContent> => {
       let transcript: string | null = null;
+      let transcriptSegments: TranscriptSegment[] | undefined;
       let transcriptionFailed = false;
 
       const isVideo = post.mediaType === 'VIDEO' || post.mediaType === 'REEL';
@@ -142,6 +194,7 @@ export async function runCompliancePipeline(
           );
           const result = await Promise.race([transcribeFromUrl(post.mediaUrl!, post.id), timeout]);
           transcript = result.text;
+          transcriptSegments = result.segments;
         } catch (err) {
           console.warn(`[compliance] Transcription failed for post ${post.id}:`, err);
           transcriptionFailed = true;
@@ -152,6 +205,7 @@ export async function runCompliancePipeline(
         postId: post.id,
         caption: post.caption || '',
         transcript,
+        transcriptSegments,
         timestamp: post.timestamp,
         mediaType: post.mediaType,
         thumbnailUrl: post.thumbnailUrl || post.mediaUrl,
@@ -185,6 +239,18 @@ export async function runCompliancePipeline(
   console.log(
     `[compliance] SEBI score: ${sebiCompliance.score} | Brand safety score: ${brandSafety.score}`,
   );
+
+  // Annotate flags with video timestamps where possible
+  const segmentMap = new Map<string, TranscriptSegment[]>(
+    postContents
+      .filter((p) => p.transcriptSegments?.length)
+      .map((p) => [p.postId, p.transcriptSegments!]),
+  );
+  const allFlags = [
+    ...Object.values(sebiCompliance.rules).flatMap((r) => r.flags),
+    ...Object.values(brandSafety.rules).flatMap((r) => r.flags),
+  ];
+  annotateTimestamps(allFlags, segmentMap);
 
   // 6. Score + verdict
   const overallScore = calculateOverallScore(sebiCompliance.score, brandSafety.score);

@@ -1,11 +1,12 @@
 /**
  * Downloads media from Meta CDN using fetch (handles redirects + browser UA),
- * then transcribes with OpenAI whisper-1 (standard API, not Azure).
+ * then transcribes with OpenAI whisper-1 using verbose_json to get segment timestamps.
  * Reuses OPENAI_MODERATION_API_KEY — no separate key needed.
  */
 
 import OpenAI from 'openai';
 import { langfuse } from '../config/langfuse.js';
+import type { TranscriptSegment } from '../types/index.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -18,6 +19,7 @@ function getWhisperClient(): OpenAI {
 
 export interface TranscriptionResult {
   text: string;
+  segments: TranscriptSegment[];
   wordCount: number;
   processingTimeMs: number;
 }
@@ -53,20 +55,24 @@ export async function transcribeFromUrl(
     const transcription = await client.audio.transcriptions.create({
       file: fs.createReadStream(tempFilePath),
       model: 'whisper-1',
-      language: 'hi', // most Indian creators post in Hindi/Hinglish
-      response_format: 'text',
-    });
+      language: 'hi',
+      response_format: 'verbose_json',
+    }) as any;
 
-    const text =
-      typeof transcription === 'string' ? transcription : (transcription as any).text ?? '';
+    const text: string = transcription.text ?? '';
+    const segments: TranscriptSegment[] = (transcription.segments ?? []).map((s: any) => ({
+      start: s.start,
+      end: s.end,
+      text: s.text,
+    }));
     const wordCount = text.split(/\s+/).filter(Boolean).length;
 
-    span.update({ output: { wordCount, textLength: text.length } });
+    span.update({ output: { wordCount, segments: segments.length } });
     span.end();
     trace.update({ output: { success: true, wordCount } });
     langfuse.flushAsync().catch(() => {});
 
-    return { text, wordCount, processingTimeMs: Date.now() - startTime };
+    return { text, segments, wordCount, processingTimeMs: Date.now() - startTime };
   } catch (error: any) {
     span.update({ level: 'ERROR', statusMessage: error.message });
     span.end();
