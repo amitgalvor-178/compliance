@@ -53,6 +53,7 @@ function calculateVerdict(
 
 function buildSummaryNotes(
   report: Omit<ComplianceReport, 'summaryNotes' | 'reportId' | 'createdAt'>,
+  videosFailed: number,
 ): string[] {
   const notes: string[] = [];
 
@@ -87,9 +88,9 @@ function buildSummaryNotes(
     );
   }
 
-  if (report.postsTranscribed < report.postsAnalyzed) {
+  if (videosFailed > 0) {
     notes.push(
-      `${report.postsAnalyzed - report.postsTranscribed} video post(s) could not be transcribed — analysis based on captions only for those posts`,
+      `${videosFailed} video post(s) could not be transcribed — analysis based on captions only for those posts`,
     );
   }
 
@@ -161,6 +162,8 @@ export async function runCompliancePipeline(
   );
 
   const postsTranscribed = postContents.filter((p) => p.transcript !== null).length;
+  // Only count genuine failures (attempted but failed) — not images or intentional skips
+  const videosFailed = postContents.filter((p) => p.transcriptionFailed === true).length;
 
   // Build postMedia map for frontend thumbnail + link display
   const postMedia: Record<string, { thumbnail?: string; permalink?: string }> = {};
@@ -198,7 +201,7 @@ export async function runCompliancePipeline(
     verdict,
   };
 
-  const summaryNotes = buildSummaryNotes(partial);
+  const summaryNotes = buildSummaryNotes(partial, videosFailed);
 
   return {
     reportId: uuidv4(),

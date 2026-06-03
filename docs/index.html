@@ -584,18 +584,14 @@
 
 <script>
   const STORAGE_KEY = 'galvor_compliance_api_url';
+  const DEFAULT_API_URL = 'https://galvor-compliance.onrender.com';
 
-  function isGitHubPages() {
-    return window.location.hostname.endsWith('github.io');
-  }
   function getApiBase() {
-    return localStorage.getItem(STORAGE_KEY) || (isGitHubPages() ? null : window.location.origin);
+    return localStorage.getItem(STORAGE_KEY) || DEFAULT_API_URL;
   }
 
   window.addEventListener('DOMContentLoaded', () => {
-    if (isGitHubPages() && !localStorage.getItem(STORAGE_KEY)) {
-      document.getElementById('no-backend-banner').style.display = 'flex';
-    }
+    // Banner hidden — default URL is always set
   });
 
   // ── Demo data ────────────────────────────────────────────────────────────────
@@ -1062,10 +1058,18 @@
     // Render radar charts after DOM update
     setTimeout(() => {
       drawRadar('sebi-radar', [
-        'Inv. Advice', 'Return\nClaims', 'SEBI\nDisclosure', 'Paid\nPromo', 'Courses'
+        ['Unregistered', 'Investment Advice'],
+        ['Guaranteed', 'Returns Claims'],
+        ['SEBI', 'Registration'],
+        ['Undisclosed', 'Paid Promotion'],
+        ['Fraudulent', 'Trading Course'],
       ], sebiRadarData, '#3b82f6');
       drawRadar('brand-radar', [
-        'Profanity', 'Hate\nSpeech', 'Violence', 'PII\nDisclosure', 'Competitor'
+        ['Profanity', 'Explicit Content'],
+        ['Hate Speech'],
+        ['Violence'],
+        ['Personal Info', 'Disclosure'],
+        ['Competitor', 'Brand Mention'],
       ], brandRadarData, '#16a34a');
     }, 0);
   }
